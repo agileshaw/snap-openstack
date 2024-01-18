@@ -39,6 +39,14 @@ def mock_run_sync(mocker):
     loop.close()
 
 
+@pytest.fixture(autouse=True)
+def mock_read_config(mocker):
+    def read_config(client, config_key):
+        return {}
+
+    mocker.patch("sunbeam.plugins.observability.plugin.read_config", read_config)
+
+
 @pytest.fixture()
 def cclient():
     with patch("sunbeam.plugins.interface.v1.base.Client") as p:
@@ -314,3 +322,65 @@ class TestRemoveGrafanaAgentK8sStep:
         jhelper.wait_application_gone.assert_called_once()
         assert result.result_type == ResultType.FAILED
         assert result.message == "timed out"
+
+
+class TestFillGrafanaAgentK8sEndpointStep:
+    def test_run(self, cclient, jhelper, tfhelper, observabilityplugin):
+        step = observability_plugin.FillGrafanaAgentK8sEndpointStep(
+            cclient, tfhelper, jhelper
+        )
+        result = step.run()
+
+        tfhelper.write_tfvars.assert_called_once()
+        tfhelper.apply.assert_called_once()
+        assert result.result_type == ResultType.COMPLETED
+
+    def test_run_tf_destroy_failed(
+        self, cclient, jhelper, tfhelper, observabilityplugin
+    ):
+        tfhelper.apply.side_effect = TerraformException("apply failed...")
+
+        step = observability_plugin.FillGrafanaAgentK8sEndpointStep(
+            cclient, tfhelper, jhelper
+        )
+        result = step.run()
+
+        # Make sure they are in the code
+        endpoints = {
+            "metrics-endpoint": "metrics-endpoint",
+            "logging-provider": "logging-provider",
+            "grafana-dashboards-consumer": "grafana-dashboards-consumer",
+        }
+        tfhelper.write_tfvars.assert_called_once_with(endpoints)
+        tfhelper.apply.assert_called_once()
+        assert result.result_type == ResultType.FAILED
+        assert result.message == "apply failed..."
+
+
+class TestRemoveGrafanaAgentK8sEndpointStep:
+    def test_run(self, cclient, jhelper, tfhelper, observabilityplugin):
+        step = observability_plugin.RemoveGrafanaAgentK8sEndpointStep(
+            cclient, tfhelper, jhelper
+        )
+        result = step.run()
+
+        tfhelper.write_tfvars.assert_called_once()
+        tfhelper.apply.assert_called_once()
+        assert result.result_type == ResultType.COMPLETED
+
+    def test_run_tf_destroy_failed(
+        self, cclient, jhelper, tfhelper, observabilityplugin
+    ):
+        tfhelper.apply.side_effect = TerraformException("apply failed...")
+
+        step = observability_plugin.RemoveGrafanaAgentK8sEndpointStep(
+            cclient, tfhelper, jhelper
+        )
+        result = step.run()
+
+        # Make sure they are removed
+        endpoints = {}
+        tfhelper.write_tfvars.assert_called_once_with(endpoints)
+        tfhelper.apply.assert_called_once()
+        assert result.result_type == ResultType.FAILED
+        assert result.message == "apply failed..."

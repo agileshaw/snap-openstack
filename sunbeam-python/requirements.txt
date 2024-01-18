@@ -36,5 +36,8 @@ lightkube-models
 jsonschema
 GitPython
 
+# For plugin validation
+croniter
+
 # Regression introduced in 1.3.3
 macaroonbakery!=1.3.3

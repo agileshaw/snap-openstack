@@ -162,6 +162,94 @@ class RemoveObservabilityIntegrationStep(BaseStep):
         return Result(ResultType.COMPLETED)
 
 
+class FillGrafanaAgentK8sEndpointStep(BaseStep):
+    """Update terraform plan to fill grafana-agent-k8s endpoints."""
+
+    def __init__(
+        self,
+        client: Client,
+        tfhelper: TerraformHelper,
+        jhelper: JujuHelper,
+    ) -> None:
+        super().__init__(
+            "Fill Grafana Agent K8s Endpoints",
+            "Filling Grafana agent K8s Endpoints in Openstack",
+        )
+        self.client = client
+        self.tfhelper = tfhelper
+        self.jhelper = jhelper
+        self.model = OPENSTACK_MODEL
+
+    def run(self, status: Optional[Status] = None) -> Result:
+        """Apply terraform configuration"""
+        config_key = OPENSTACK_TERRAFORM_VARS
+
+        try:
+            tfvars = read_config(self.client, config_key)
+        except ConfigItemNotFoundException:
+            tfvars = {}
+
+        # Fill grafana-agent-k8s's endpoints in openstack model
+        tfvars.update(
+            {
+                "metrics-endpoint": "metrics-endpoint",
+                "logging-provider": "logging-provider",
+                "grafana-dashboards-consumer": "grafana-dashboards-consumer",
+            }
+        )
+        update_config(self.client, config_key, tfvars)
+        self.tfhelper.write_tfvars(tfvars)
+
+        try:
+            self.tfhelper.apply()
+        except TerraformException as e:
+            return Result(ResultType.FAILED, str(e))
+
+        return Result(ResultType.COMPLETED)
+
+
+class RemoveGrafanaAgentK8sEndpointStep(BaseStep):
+    """Update terraform plan to remove grafana-agent-k8s endpoints."""
+
+    def __init__(
+        self,
+        client: Client,
+        tfhelper: TerraformHelper,
+        jhelper: JujuHelper,
+    ) -> None:
+        super().__init__(
+            "Remove Grafana Agent K8s Endpoints",
+            "Removing Grafana agent K8s Endpoints in Openstack",
+        )
+        self.client = client
+        self.tfhelper = tfhelper
+        self.jhelper = jhelper
+        self.model = OPENSTACK_MODEL
+
+    def run(self, status: Optional[Status] = None) -> Result:
+        """Apply terraform configuration"""
+        config_key = OPENSTACK_TERRAFORM_VARS
+
+        try:
+            tfvars = read_config(self.client, config_key)
+        except ConfigItemNotFoundException:
+            tfvars = {}
+
+        # Remove grafana-agent-k8s's endpoints in openstack model
+        tfvars.pop("metrics-endpoint", None)
+        tfvars.pop("logging-provider", None)
+        tfvars.pop("grafana-dashboards-consumer", None)
+        update_config(self.client, config_key, tfvars)
+        self.tfhelper.write_tfvars(tfvars)
+
+        try:
+            self.tfhelper.apply()
+        except TerraformException as e:
+            return Result(ResultType.FAILED, str(e))
+
+        return Result(ResultType.COMPLETED)
+
+
 class DeployObservabilityStackStep(BaseStep, JujuStepHelper):
     """Deploy Observability Stack using Terraform"""
 
@@ -538,7 +626,9 @@ class PatchCosLoadBalancerStep(PatchLoadBalancerServicesStep):
 
 class ObservabilityPlugin(EnableDisablePlugin):
     version = Version("0.0.1")
-    requires = {PluginRequirement("telemetry", optional=True)}
+    requires = {
+        PluginRequirement("telemetry", optional=True),
+    }
 
     def __init__(self, client: Client) -> None:
         super().__init__("observability", client)
@@ -612,6 +702,7 @@ class ObservabilityPlugin(EnableDisablePlugin):
             DeployGrafanaAgentK8sStep(
                 self, tfhelper_grafana_agent_k8s, tfhelper_cos, jhelper
             ),
+            FillGrafanaAgentK8sEndpointStep(self.client, tfhelper_openstack, jhelper),
         ]
 
         run_plan(cos_plan, console)
@@ -668,6 +759,7 @@ class ObservabilityPlugin(EnableDisablePlugin):
 
         grafana_agent_k8s_plan = [
             TerraformInitStep(tfhelper_grafana_agent_k8s),
+            RemoveGrafanaAgentK8sEndpointStep(self.client, tfhelper_openstack, jhelper),
             RemoveGrafanaAgentK8sStep(jhelper, tfhelper_grafana_agent_k8s),
         ]
 
@@ -687,7 +779,7 @@ class ObservabilityPlugin(EnableDisablePlugin):
         super().disable_plugin()
 
     @click.group()
-    def observability_group(self):
+    def observability_group(self) -> None:
         """Manage Observability."""
 
     @click.command()

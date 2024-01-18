@@ -702,7 +702,7 @@ class ObservabilityPlugin(EnableDisablePlugin):
             DeployGrafanaAgentK8sStep(
                 self, tfhelper_grafana_agent_k8s, tfhelper_cos, jhelper
             ),
-            FillGrafanaAgentK8sEndpointStep(tfhelper_openstack, jhelper),
+            FillGrafanaAgentK8sEndpointStep(self.client, tfhelper_openstack, jhelper),
         ]
 
         run_plan(cos_plan, console)
@@ -760,9 +760,7 @@ class ObservabilityPlugin(EnableDisablePlugin):
         grafana_agent_k8s_plan = [
             TerraformInitStep(tfhelper_grafana_agent_k8s),
             RemoveGrafanaAgentK8sEndpointStep(self.client, tfhelper_openstack, jhelper),
-            RemoveGrafanaAgentK8sStep(
-                self, tfhelper_grafana_agent_k8s, tfhelper_cos, jhelper
-            ),
+            RemoveGrafanaAgentK8sStep(jhelper, tfhelper_grafana_agent_k8s),
         ]
 
         run_plan(grafana_agent_k8s_plan, console)

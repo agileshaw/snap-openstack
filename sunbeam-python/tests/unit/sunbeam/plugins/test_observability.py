@@ -235,3 +235,91 @@ class TestRemoveGrafanaAgentStep:
         jhelper.wait_application_gone.assert_called_once()
         assert result.result_type == ResultType.FAILED
         assert result.message == "timed out"
+
+
+class TestDeployGrafanaAgentK8sStep:
+    def test_run(self, cclient, jhelper, tfhelper, observabilityplugin):
+        step = observability_plugin.DeployGrafanaAgentK8sStep(
+            observabilityplugin, tfhelper, tfhelper, jhelper
+        )
+        result = step.run()
+
+        tfhelper.write_tfvars.assert_called_once()
+        tfhelper.apply.assert_called_once()
+        jhelper.wait_application_ready.assert_called_once()
+        assert result.result_type == ResultType.COMPLETED
+
+    def test_run_tf_apply_failed(self, cclient, jhelper, tfhelper, observabilityplugin):
+        tfhelper.apply.side_effect = TerraformException("apply failed...")
+
+        step = observability_plugin.DeployGrafanaAgentK8sStep(
+            observabilityplugin, tfhelper, tfhelper, jhelper
+        )
+        result = step.run()
+
+        tfhelper.write_tfvars.assert_called_once()
+        tfhelper.apply.assert_called_once()
+        jhelper.wait_application_ready.assert_not_called()
+        assert result.result_type == ResultType.FAILED
+        assert result.message == "apply failed..."
+
+    def test_run_waiting_timed_out(
+        self, cclient, jhelper, tfhelper, observabilityplugin
+    ):
+        jhelper.wait_application_ready.side_effect = TimeoutException("timed out")
+
+        step = observability_plugin.DeployGrafanaAgentK8sStep(
+            observabilityplugin, tfhelper, tfhelper, jhelper
+        )
+        result = step.run()
+
+        tfhelper.write_tfvars.assert_called_once()
+        tfhelper.apply.assert_called_once()
+        jhelper.wait_application_ready.assert_called_once()
+        assert result.result_type == ResultType.FAILED
+        assert result.message == "timed out"
+
+
+class TestRemoveGrafanaAgentK8sStep:
+    def test_run(self, cclient, jhelper, tfhelper, observabilityplugin):
+        step = observability_plugin.RemoveGrafanaAgentK8sStep(
+            observabilityplugin, tfhelper, tfhelper, jhelper
+        )
+        result = step.run()
+
+        tfhelper.write_tfvars.assert_called_once()
+        tfhelper.destroy.assert_called_once()
+        jhelper.wait_application_gone.assert_called_once()
+        assert result.result_type == ResultType.COMPLETED
+
+    def test_run_tf_destroy_failed(
+        self, cclient, jhelper, tfhelper, observabilityplugin
+    ):
+        tfhelper.destroy.side_effect = TerraformException("destroy failed...")
+
+        step = observability_plugin.RemoveGrafanaAgentK8sStep(
+            observabilityplugin, tfhelper, tfhelper, jhelper
+        )
+        result = step.run()
+
+        tfhelper.write_tfvars.assert_called_once()
+        tfhelper.destroy.assert_called_once()
+        jhelper.wait_application_gone.assert_not_called()
+        assert result.result_type == ResultType.FAILED
+        assert result.message == "destroy failed..."
+
+    def test_run_waiting_timed_out(
+        self, cclient, jhelper, tfhelper, observabilityplugin
+    ):
+        jhelper.wait_application_gone.side_effect = TimeoutException("timed out")
+
+        step = observability_plugin.RemoveGrafanaAgentK8sStep(
+            observabilityplugin, tfhelper, tfhelper, jhelper
+        )
+        result = step.run()
+
+        tfhelper.write_tfvars.assert_called_once()
+        tfhelper.destroy.assert_called_once()
+        jhelper.wait_application_gone.assert_called_once()
+        assert result.result_type == ResultType.FAILED
+        assert result.message == "timed out"

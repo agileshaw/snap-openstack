@@ -350,10 +350,14 @@ class DeployGrafanaAgentK8sStep(BaseStep, JujuStepHelper):
 
         LOG.debug("Application monitored for readiness: %s", app)
         try:
+            # Note that grafana agent k8s will be blocked first if there's not
+            # workload "requires" relations. We will add them later in the
+            # steps.
             run_sync(
                 self.jhelper.wait_application_ready(
                     app,
                     self.model,
+                    accepted_status=["active", "blocked"],
                     timeout=OBSERVABILITY_DEPLOY_TIMEOUT,
                 )
             )

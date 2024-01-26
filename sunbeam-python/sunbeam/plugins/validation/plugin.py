@@ -159,12 +159,12 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
 
     @click.command()
     def enable_plugin(self) -> None:
-        """Enable OpenStack Telemetry applications."""
+        """Enable OpenStack Integration Test Suite (tempest)."""
         super().enable_plugin()
 
     @click.command()
     def disable_plugin(self) -> None:
-        """Disable OpenStack Telemetry applications."""
+        """Disable OpenStack Integration Test Suite (tempest)."""
         super().disable_plugin()
 
     @click.command()

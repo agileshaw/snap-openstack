@@ -80,7 +80,7 @@ class TestValidatorFunction:
     @pytest.mark.parametrize(
         "test_input,expected_output",
         [
-            ("*/5 * * * *", (False, "Schedule repeats faster")),
+            ("*/5 * * * *", (False, "Cannot schedule periodic check")),
             ("*/30 * * * * 6", (False, "This cron does not support")),
             ("*/30 * *", (False, "Exactly 5 columns must")),
             ("*/5 * * * xyz", (False, "not acceptable")),

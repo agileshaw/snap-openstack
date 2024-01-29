@@ -22,6 +22,7 @@ from croniter import croniter
 from packaging.version import Version
 from rich.console import Console
 
+from sunbeam.jobs.plugin import PluginManager
 from sunbeam.clusterd.client import Client
 from sunbeam.clusterd.service import ClusterServiceUnavailableException
 from sunbeam.commands.openstack import OPENSTACK_MODEL
@@ -48,7 +49,13 @@ def validate_schedule(schedule: str) -> tuple[bool, Optional[str]]:
 
     # croniter supports second repeats, but vixie cron does not.
     if len(schedule.split()) == 6:
-        return False, "This cron does not support seconds in schedule (6 fields)."
+        return (
+            False,
+            (
+                "This cron does not support seconds in schedule (6 fields)."
+                " Exactly 5 columns must be specified for iterator expression."
+            ),
+        )
 
     # constant base time for consistency
     base = datetime(2004, 3, 5)
@@ -71,7 +78,10 @@ def validate_schedule(schedule: str) -> tuple[bool, Optional[str]]:
     t1 = cron.get_next()
     t2 = cron.get_next()
     if t2 - t1 <= MINIMAL_PERIOD:
-        return False, "Schedule repeats faster than 15 minutes."
+        return (
+            False,
+            "Cannot schedule periodic check to run faster than every 15 minutes.",
+        )
 
     return True, f"Setting schedule to {schedule}"
 
@@ -157,6 +167,13 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
             if print_stdout:
                 console.print(action_result.get("stdout").strip())
 
+    def _configure_preflight_check(self) -> False:
+        """Preflight check for configure command."""
+        enabled_plugins = PluginManager.enabled_plugins(self.client)
+        if "observability" not in enabled_plugins:
+            return False
+        return True
+
     @click.command()
     def enable_plugin(self) -> None:
         """Enable OpenStack Integration Test Suite (tempest)."""
@@ -180,6 +197,11 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
     )
     def configure_validation(self, schedule: str = "") -> None:
         """Configure validation plugin."""
+        if not self._configure_preflight_check():
+            raise click.ClickException(
+                "'observability' plugin is required for configuring validation plugin."
+            )
+
         jhelper = JujuHelper(self.client, self.snap.paths.user_data)
         with console.status("Configuring validation plugin ..."):
             valid, message = validate_schedule(schedule)
@@ -231,12 +253,13 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
         help="Run tests serially. By default, tests run in parallel.",
     )
     @click.option(
+        "-l",
         "--test-list",
         default="",
         help=(
             "Use a predefined test list. See `sunbeam validation-lists`"
             " for available test lists."
-        )
+        ),
     )
     def run_validate_action(
         self,

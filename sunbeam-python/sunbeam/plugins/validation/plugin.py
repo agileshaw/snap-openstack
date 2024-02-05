@@ -14,19 +14,20 @@
 # limitations under the License.
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Dict, List, Optional
 
 import click
 from croniter import croniter
 from packaging.version import Version
 from rich.console import Console
 
-from sunbeam.jobs.plugin import PluginManager
 from sunbeam.clusterd.client import Client
 from sunbeam.clusterd.service import ClusterServiceUnavailableException
 from sunbeam.commands.openstack import OPENSTACK_MODEL
 from sunbeam.jobs.juju import JujuHelper, run_sync
+from sunbeam.jobs.plugin import PluginManager
 from sunbeam.plugins.interface.v1.openstack import (
     OpenStackControlPlanePlugin,
     TerraformPlanLocation,
@@ -41,20 +42,21 @@ TEMPEST_CHANNEL = "latest/edge"
 VALIDATION_PLUGIN_DEPLOY_TIMEOUT = 60 * 60  # tempest can take some time to initialized
 
 
-def validate_schedule(schedule: str) -> tuple[bool, Optional[str]]:
-    """Validate if the schedule config option is validate or not."""
+def validated_schedule(schedule: str) -> str:
+    """Validate the schedule config option.
+
+    Return the valid schedule if valid,
+    otherwise Raise a click BadParameter exception.
+    """
     # Empty schedule is fine; it means it's disabled in this context.
     if not schedule:
-        return True, "Schedule is an empty string, disabling the periodic check."
+        return ""
 
     # croniter supports second repeats, but vixie cron does not.
     if len(schedule.split()) == 6:
-        return (
-            False,
-            (
-                "This cron does not support seconds in schedule (6 fields)."
-                " Exactly 5 columns must be specified for iterator expression."
-            ),
+        raise click.ClickException(
+            "This cron does not support seconds in schedule (6 fields)."
+            " Exactly 5 columns must be specified for iterator expression."
         )
 
     # constant base time for consistency
@@ -68,7 +70,7 @@ def validate_schedule(schedule: str) -> tuple[bool, Optional[str]]:
         # so update the error message here to suit.
         if "Exactly 5 or 6 columns" in msg:
             msg = "Exactly 5 columns must be specified for iterator expression."
-        return False, msg
+        raise click.ClickException(msg)
 
     # This is a rather naive method for enforcing this,
     # and it may be possible to craft an expression
@@ -78,12 +80,57 @@ def validate_schedule(schedule: str) -> tuple[bool, Optional[str]]:
     t1 = cron.get_next()
     t2 = cron.get_next()
     if t2 - t1 <= MINIMAL_PERIOD:
-        return (
-            False,
-            "Cannot schedule periodic check to run faster than every 15 minutes.",
+        raise click.ClickException(
+            "Cannot schedule periodic check to run faster than every 15 minutes."
         )
 
-    return True, f"Setting schedule to {schedule}"
+    return schedule
+
+
+@dataclass()
+class Config:
+    """Represents config updates provided by the user.
+
+    None values mean the user did not provide them.
+    """
+
+    schedule: Optional[str] = None
+
+
+def parse_config_args(args: List[str]) -> Dict[str, str]:
+    """Parse key=value args into a valid dictionary of key: values.
+
+    Raise a click bad argument error if errors (only checks syntax here).
+    """
+    config = {}
+    for arg in args:
+        split_arg = arg.split("=", 1)
+        if len(split_arg) == 1:
+            raise click.ClickException("syntax: key=value")
+        key, value = split_arg
+        if key in config:
+            raise click.ClickException(
+                f"{key} parameter seen multiple times.  Only provide it once."
+            )
+        config[key] = value
+    return config
+
+
+def validated_config_args(args: Dict[str, str]) -> Config:
+    """Validate config and return validated config if no errors.
+
+    Raise a click bad argument error if errors.
+    """
+
+    config = Config()
+
+    for key, value in args.items():
+        if key == "schedule":
+            config.schedule = validated_schedule(value)
+        else:
+            raise click.ClickException(f"{key} is not a supported config option")
+
+    return config
 
 
 class ValidationPlugin(OpenStackControlPlanePlugin):
@@ -185,42 +232,47 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
         super().disable_plugin()
 
     @click.command()
-    @click.option(
-        "-s",
-        "--schedule",
-        default="",
-        help=(
-            "The cron schedule expression to define when to run tempest"
-            " periodic checks. When the value is empty (default),"
-            " period checks will be disabled."
-        ),
-    )
-    def configure_validation(self, schedule: str = "") -> None:
-        """Configure validation plugin."""
+    @click.argument("options", nargs=-1)
+    def configure_validation(self, options: Optional[List[str]] = None) -> None:
+        """Configure validation plugin.
+
+        Run without arguments to view available configuration options.
+
+        Run with key=value args to set configuration values.
+        For example: sunbeam configure validation schedule="*/30 * * * *"
+        """
         if not self._configure_preflight_check():
             raise click.ClickException(
                 "'observability' plugin is required for configuring validation plugin."
             )
 
-        jhelper = JujuHelper(self.client, self.snap.paths.user_data)
-        with console.status("Configuring validation plugin ..."):
-            valid, message = validate_schedule(schedule)
-            if not valid:
-                raise click.ClickException(message)
-
-            app = "tempest"
-            model = OPENSTACK_MODEL
-            unit = run_sync(jhelper.get_leader_unit(app, model))
-            if not unit:
-                message = f"Unable to get {app} leader"
-                raise click.ClickException(message)
-
-            run_sync(
-                jhelper.set_application_config(
-                    model, app, config={"schedule": schedule}
-                )
+        if not options:
+            console.print(
+                "Config options available: \n\n"
+                "schedule: set a cron schedule for running periodic tests.  Empty disables.\n\n"
+                "Run with key=value args to set configuration values.\n"
+                'For example: sunbeam configure validation schedule="*/30 * * * *"'
             )
-            console.print(message)
+            return
+
+        config_changes = validated_config_args(parse_config_args(options))
+
+        if config_changes.schedule is not None:
+            jhelper = JujuHelper(self.client, self.snap.paths.user_data)
+            with console.status("Configuring validation plugin ..."):
+                app = "tempest"
+                model = OPENSTACK_MODEL
+                unit = run_sync(jhelper.get_leader_unit(app, model))
+                if not unit:
+                    message = f"Unable to get {app} leader"
+                    raise click.ClickException(message)
+
+                run_sync(
+                    jhelper.set_application_config(
+                        model, app, config={"schedule": config_changes.schedule}
+                    )
+                )
+                console.print(message)
 
     @click.command()
     @click.option(
@@ -228,7 +280,7 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
         "--smoke",
         is_flag=True,
         default=False,
-        help="Run the smoke tests only. Equivalent to --regex=smoke.",
+        help="Run the smoke tests only. Equivalent to --regex=smoke.  If --regex and --smoke are provided, --regex is ignored.",
     )
     @click.option(
         "-r",
@@ -269,7 +321,7 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
         serial: bool = False,
         test_list: str = "",
     ) -> None:
-        """Validate the sunbeam installation."""
+        """Run a set of tests on the sunbeam installation."""
         action_name = "validate"
         action_params = {
             "regex": "smoke" if smoke else regex,
@@ -297,6 +349,10 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
             print_stdout=True,
         )
 
+    @click.group()
+    def validation_groups(self):
+        """Manage cloud validation functionality."""
+
     def commands(self) -> dict:
         """Dict of clickgroup along with commands."""
         commands = super().commands()
@@ -312,15 +368,18 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
         if enabled:
             commands.update(
                 {
-                    "init": [
-                        {"name": "validate", "command": self.run_validate_action},
-                        {
-                            "name": "validation-lists",
-                            "command": self.run_get_lists_action,
-                        },
-                    ],
+                    # add the validation subcommand group to the root group:
+                    # sunbeam validation ...
+                    "init": [{"name": "validation", "command": self.validation_groups}],
+                    # sunbeam configure validation ...
                     "configure": [
-                        {"name": "validation", "command": self.configure_validation},
+                        {"name": "validation", "command": self.configure_validation}
+                    ],
+                    # add the subcommands:
+                    # sunbeam validation run ... etc.
+                    "validation": [
+                        {"name": "run", "command": self.run_validate_action},
+                        {"name": "test-lists", "command": self.run_get_lists_action},
                     ],
                 }
             )

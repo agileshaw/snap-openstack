@@ -280,7 +280,7 @@ class ValidationPlugin(OpenStackControlPlanePlugin):
         "--smoke",
         is_flag=True,
         default=False,
-        help="Run the smoke tests only. Equivalent to --regex=smoke.  If --regex and --smoke are provided, --regex is ignored.",
+        help="Run the smoke tests only. Equivalent to --regex=smoke.  If both --regex and --smoke are provided, --regex is ignored.",
     )
     @click.option(
         "-r",
